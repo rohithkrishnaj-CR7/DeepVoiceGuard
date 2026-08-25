@@ -1,0 +1,49 @@
+﻿# Virtual Environment
+venv/
+env/
+ENV/
+.venv/
+
+# Python Cache & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Distribution & Build
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Jupyter & IDE
+.ipynb_checkpoints
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary Files & Logs
+*.log
+*.tmp
+*.bak
+.DS_Store
+batch_scan_report.csv
+sample_cloned_report.csv
+test_herestring.py
+test.txt
+make_project.py
+build_features.py
+generator_p1.py
