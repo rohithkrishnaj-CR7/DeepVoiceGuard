@@ -220,6 +220,11 @@ with st.sidebar:
     st.markdown("#### ⚙️ Scanner Sensitivity")
     chunk_dur = st.slider("Segment Window (seconds)", min_value=1.5, max_value=5.0, value=3.0, step=0.5)
     overlap_rate = st.slider("Window Overlap", min_value=0.0, max_value=0.75, value=0.50, step=0.25)
+    
+    if st.button("🔄 Reload Models & Reset Cache", use_container_width=True):
+        st.cache_resource.clear()
+        st.rerun()
+
     st.divider()
     st.caption("v1.0.0 | Academic & Production Ready")
 
