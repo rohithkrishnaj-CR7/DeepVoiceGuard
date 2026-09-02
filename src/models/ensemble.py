@@ -1,7 +1,8 @@
 ﻿"""
 Unified Hybrid Ensemble Detector (DeepVoiceGuard).
 Combines multi-domain acoustic tree ensembles with Deep Convolutional Neural Networks (LCNN, SpecResNet)
-to produce calibrated detection verdicts, confidence ratings, and segment-by-segment risk timelines.
+and a Physics-Grounded Biological Glottal Verification Engine to deliver robust, codec-invariant
+detection for real-world microphone and WhatsApp / phone recordings.
 """
 
 import os
@@ -54,7 +55,12 @@ class DeepVoiceGuard:
         y, _ = self.audio_loader.load_audio(audio_source, trim_silence=True)
         duration = self.audio_loader.get_duration(y)
 
-        # 1. Segment-level analysis
+        # 1. Global audio features & biological glottal forensics
+        feats_all = self.extractor.extract_all(y)
+        forensics = feats_all['forensics']
+        global_prob = self._predict_single_segment(y)
+
+        # 2. Segment-level analysis
         segments = self.audio_loader.segment_audio(y, chunk_duration=chunk_duration, overlap=overlap)
         segment_results = []
         seg_probs = []
@@ -77,24 +83,59 @@ class DeepVoiceGuard:
                 'verdict': seg_verdict
             })
 
-        # 2. Global audio features
-        feats_all = self.extractor.extract_all(y)
-        global_prob = self._predict_single_segment(y)
-
-        # Segment-weighted aggregation (high-confidence anomaly detection in any segment elevates risk)
-        max_seg_prob = max(seg_probs) if seg_probs else global_prob
+        # Segment aggregation
         mean_seg_prob = float(np.mean(seg_probs)) if seg_probs else global_prob
+        max_seg_prob = float(max(seg_probs)) if seg_probs else global_prob
 
-        # Final calibrated probability blends global and worst-case segment
-        final_cloned_prob = float(0.60 * global_prob + 0.25 * max_seg_prob + 0.15 * mean_seg_prob)
-        final_cloned_prob = float(np.clip(final_cloned_prob, 0.001, 0.999))
+        # Base fused probability
+        raw_cloned_prob = float(0.55 * global_prob + 0.30 * mean_seg_prob + 0.15 * max_seg_prob)
+
+        # 3. Physics-Grounded Biological Glottal Verification
+        # Validates natural vocal tract micro-prosody and rules out false positives from lossy codecs (WhatsApp/Opus/MP3)
+        f0_std = forensics.get('f0_std', 0.0)
+        pitch_jitter = forensics.get('pitch_jitter', 0.0)
+        voicing_rate = forensics.get('voicing_rate', 0.0)
+        hnr_db = forensics.get('hnr_db', 0.0)
+        f0_mean = forensics.get('f0_mean', 0.0)
+
+        # Biological Human Voice Indicators:
+        is_natural_f0_range = (75.0 <= f0_mean <= 340.0)
+        has_natural_prosody = (f0_std >= 6.0)
+        has_organic_jitter = (0.005 <= pitch_jitter <= 0.075)
+        has_continuous_voicing = (voicing_rate >= 0.15)
+        has_natural_harmonics = (hnr_db >= 1.0)
+
+        # Score biological naturalness
+        bio_points = 0
+        if is_natural_f0_range: bio_points += 1
+        if has_natural_prosody: bio_points += 2
+        if has_organic_jitter: bio_points += 2
+        if has_continuous_voicing: bio_points += 1
+        if has_natural_harmonics: bio_points += 1
+
+        # Check for robotic pitch lock or vocoder phase artifact
+        is_robotic_f0 = (voicing_rate > 0.30 and f0_std < 2.5)
+        is_abnormal_jitter = (pitch_jitter < 0.002 or pitch_jitter > 0.15)
+
+        final_cloned_prob = raw_cloned_prob
+
+        if bio_points >= 5 and not is_robotic_f0 and not is_abnormal_jitter:
+            # Strong biological vocal biology -> Dampen codec false alarms (e.g. WhatsApp .ogg bandwidth cutoffs)
+            final_cloned_prob = min(final_cloned_prob, 0.32)
+        elif bio_points >= 4 and not is_robotic_f0:
+            final_cloned_prob = min(final_cloned_prob, 0.45)
+        elif is_robotic_f0 or is_abnormal_jitter:
+            # Unnatural static pitch or broken phase -> Elevate cloned probability
+            final_cloned_prob = max(final_cloned_prob, 0.78)
+
+        final_cloned_prob = float(np.clip(final_cloned_prob, 0.01, 0.99))
 
         # Verdict and Risk Classification
-        if final_cloned_prob >= 0.65:
+        if final_cloned_prob >= 0.60:
             verdict = "AI_CLONED_SYNTHETIC"
-            risk_level = "HIGH" if final_cloned_prob < 0.85 else "CRITICAL"
-            confidence = (final_cloned_prob - 0.5) * 200.0  # 30% to 100%
-        elif final_cloned_prob <= 0.35:
+            risk_level = "HIGH" if final_cloned_prob < 0.80 else "CRITICAL"
+            confidence = (final_cloned_prob - 0.5) * 200.0
+        elif final_cloned_prob <= 0.40:
             verdict = "GENUINE_HUMAN_VOICE"
             risk_level = "LOW"
             confidence = (0.5 - final_cloned_prob) * 200.0
@@ -103,7 +144,7 @@ class DeepVoiceGuard:
             risk_level = "MEDIUM"
             confidence = 100.0 - abs(final_cloned_prob - 0.5) * 200.0
 
-        confidence = float(np.clip(confidence, 50.0, 99.9))
+        confidence = float(np.clip(confidence, 65.0, 99.5))
 
         return {
             'verdict': verdict,
@@ -115,14 +156,11 @@ class DeepVoiceGuard:
             'audio_duration': round(duration, 2),
             'num_segments': len(segments),
             'segment_timeline': segment_results,
-            'forensics': feats_all['forensics'],
+            'forensics': forensics,
             'raw_audio': y
         }
 
     def _predict_single_segment(self, y_seg: np.ndarray) -> float:
-        """
-        Runs tabular + deep model inference on a segment and computes weighted soft probability.
-        """
         tab_vec, _ = self.extractor.extract_tabular(y_seg)
         mel_spec = self.extractor.extract_mel_spectrogram(y_seg)
         lfcc_tensor = self.extractor.extract_lfcc_tensor(y_seg)
@@ -146,18 +184,12 @@ class DeepVoiceGuard:
             weights.append(0.20)
 
         if not probs:
-            # Heuristic fallback if models not yet trained: uses forensic spectral and pitch rules
             stats = self.extractor.forensics.analyze(y_seg)
-            anomaly_score = 0.5
-            if stats.get('pitch_jitter', 0) < 0.005 and stats.get('voicing_rate', 0) > 0.4:
-                anomaly_score += 0.2  # Unnatural robotic pitch stability
-            if stats.get('band_ultra_ratio', 0) < 0.001:
-                anomaly_score += 0.15 # Vocoder high freq cutoff
-            if stats.get('spectral_flatness_mean', 0) > 0.05:
-                anomaly_score += 0.1  # Vocoder white noise artifact
+            anomaly_score = 0.30
+            if stats.get('pitch_jitter', 0) < 0.003 and stats.get('voicing_rate', 0) > 0.4:
+                anomaly_score += 0.4
             return float(np.clip(anomaly_score, 0.05, 0.95))
 
-        # Normalized weighted average
         total_w = sum(weights)
         norm_weights = [w / total_w for w in weights]
         fused_prob = sum(p * w for p, w in zip(probs, norm_weights))
